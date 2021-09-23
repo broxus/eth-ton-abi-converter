@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Converter</title>
+</head>
+<body>
+<p>
+    <label for="inputAbi">ABI</label>
+    <br/>
+    <textarea id="inputAbi" rows="5" style="width: 100%"></textarea>
+</p>
+<p>
+    <label for="inputData">Data</label>
+    <br/>
+    <textarea id="inputData" rows="5" style="width: 100%"></textarea>
+</p>
+<p>
+    <label>Output:</label>
+    <br/>
+    <span id="output" style="word-break: break-all"></span>
+</p>
+
+<script type="module">
+    import init, {mapTonCellIntoEthBytes} from './pkg/eth_ton_abi_converter.js';
+
+    async function run() {
+        await init();
+
+        const output = document.getElementById('output');
+
+        const inputAbi = document.getElementById('inputAbi');
+        const inputData = document.getElementById('inputData');
+
+        const onChange = () => {
+            const abi = inputAbi.value;
+            const data = inputData.value;
+
+            console.log(abi, data);
+
+            try {
+                output.innerText = mapTonCellIntoEthBytes(abi, data);
+            } catch (e) {
+                output.innerText = e.toString();
+            }
+        }
+
+        inputAbi.addEventListener('change', onChange);
+        inputData.addEventListener('change', onChange);
+    }
+
+    run();
+</script>
+</body>
+</html>
