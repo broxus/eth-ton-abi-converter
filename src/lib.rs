@@ -28,6 +28,7 @@ pub fn map_ton_cell_into_eth_bytes(abi: &str, boc: &str) -> Result<String, JsVal
     map_ton_tokens_to_eth_bytes(tokens)
         .handle_error()
         .map(hex::encode)
+        .map(|bytes| format!("0x{}", bytes))
 }
 
 #[wasm_bindgen(js_name = "mapEthBytesIntoTonCell")]

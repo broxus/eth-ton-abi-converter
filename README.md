@@ -44,7 +44,7 @@ try {
         '[{"name":"wid","type":"int8"},{"name":"addr","type":"uint256"},{"name":"tokens","type":"uint128"},{"name":"eth_addr","type":"uint160"},{"name":"chainId","type":"uint32"}]',
         'te6ccgEBAQEASwAAkgDgJynpvprQfepGyqb3cIWXUEmxp2eBULCggI5LuGQmvgAAAAAAAAAAAAAAAAAAAEPYQ8xpyP43mAn7dXyTTDEOyJvGPwAAAAM='
     );
-    // Will print hex encoded mapped data (without 0x prefix)
+    // Will print hex encoded mapped data
     console.log(ethBytes);
     
     // 2. ETH -> TON event data mapping
@@ -55,7 +55,7 @@ try {
     // Will print base64 encoded BOC
     console.log(tonCell);
 } catch(e) {
-    // Add parser errors are thrown as exceptions
+    // All parser errors are thrown as exceptions
     console.error(e);
 }
 ```
