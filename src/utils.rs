@@ -1,5 +1,6 @@
-use wasm_bindgen::JsCast;
-use wasm_bindgen::JsValue;
+use std::convert::TryInto;
+
+use wasm_bindgen::{JsCast, JsValue};
 
 impl<T, E> HandleError for Result<T, E>
 where
@@ -19,6 +20,20 @@ pub trait HandleError {
     type Output;
 
     fn handle_error(self) -> Result<Self::Output, JsValue>;
+}
+
+pub fn keccak256(bytes: &[u8]) -> [u8; 32] {
+    use tiny_keccak::{Hasher, Keccak};
+    let mut output = [0u8; 32];
+    let mut hasher = Keccak::v256();
+    hasher.update(bytes);
+    hasher.finalize(&mut output);
+    output
+}
+
+pub fn compute_eth_address(public_key: &secp256k1::PublicKey) -> [u8; 20] {
+    let pub_key = &public_key.serialize_uncompressed()[1..];
+    keccak256(pub_key)[32 - 20..].try_into().unwrap()
 }
 
 #[derive(thiserror::Error, Debug)]
