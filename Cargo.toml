@@ -1,6 +1,6 @@
 [package]
 name = "eth-ton-abi-converter"
-version = "0.1.4"
+version = "0.1.5"
 authors = ["Ivan Kalinin <i.kalinin@dexpa.io>"]
 edition = "2018"
 
