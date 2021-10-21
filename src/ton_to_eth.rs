@@ -2,6 +2,38 @@ use anyhow::Result;
 
 use crate::AbiMappingError;
 
+/// struct TONEvent {
+///     uint64 eventTransactionLt;
+///     uint32 eventTimestamp;
+///     bytes eventData;
+///     int8 configurationWid;
+///     uint256 configurationAddress;
+///     int8 eventContractWid;
+///     uint256 eventContractAddress;
+///     address proxy;
+///     uint32 round;
+/// }
+pub fn make_mapped_ton_event(
+    event_transaction_lt: u64,
+    event_timestamp: u32,
+    event_data: Vec<u8>,
+    configuration: ton_types::UInt256,
+    event_account: ton_types::UInt256,
+    proxy: [u8; 20],
+    round: u32,
+) -> Vec<u8> {
+    ethabi::encode(&[ethabi::Token::Tuple(vec![
+        ethabi::Token::Uint(event_transaction_lt.into()),
+        ethabi::Token::Uint(event_timestamp.into()),
+        ethabi::Token::Bytes(event_data),
+        ethabi::Token::Int(0i8.into()),
+        ethabi::Token::Uint(configuration.as_slice().into()),
+        ethabi::Token::Int(0i8.into()),
+        ethabi::Token::Uint(event_account.as_slice().into()),
+        ethabi::Token::Address(proxy.into()),
+        ethabi::Token::Uint(round.into()),
+    ])])
+}
 pub fn decode_ton_event_abi(abi: &str) -> Result<Vec<ton_abi::Param>> {
     let params = serde_json::from_str::<Vec<ton_abi::Param>>(abi)?;
     Ok(params)
