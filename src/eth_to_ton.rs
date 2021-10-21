@@ -2,7 +2,29 @@ use anyhow::Result;
 use num_bigint::{BigInt, BigUint};
 use serde::Deserialize;
 
-use crate::utils::*;
+use crate::AbiMappingError;
+
+pub struct EthEventAbi {
+    event: ethabi::Event,
+    params: Vec<ethabi::ParamType>,
+}
+
+impl EthEventAbi {
+    pub fn new(abi: &str) -> Result<Self> {
+        let event = decode_eth_event_abi(abi)?;
+        let params = event.inputs.iter().map(|item| item.kind.clone()).collect();
+        Ok(Self { event, params })
+    }
+
+    pub fn get_eth_topic_hash(&self) -> [u8; 32] {
+        self.event.signature().to_fixed_bytes()
+    }
+
+    pub fn decode_and_map(&self, data: &[u8]) -> Result<ton_types::Cell> {
+        let tokens = ethabi::decode(&self.params, data)?;
+        map_eth_tokens_to_ton_cell(tokens, &self.params)
+    }
+}
 
 pub fn decode_eth_event_abi(abi: &str) -> Result<ethabi::Event> {
     #[derive(Deserialize)]

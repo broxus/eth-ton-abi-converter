@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::utils::*;
+use crate::AbiMappingError;
 
 pub fn decode_ton_event_abi(abi: &str) -> Result<Vec<ton_abi::Param>> {
     let params = serde_json::from_str::<Vec<ton_abi::Param>>(abi)?;
