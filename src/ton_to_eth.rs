@@ -47,8 +47,13 @@ pub fn unpack_from_cell(
 
     for param in params {
         let last = Some(param) == params.last();
-        let (token_value, new_cursor) =
-            ton_abi::TokenValue::read_from(&param.kind, cursor, last, 2)?;
+        let (token_value, new_cursor) = ton_abi::TokenValue::read_from(
+            &param.kind,
+            cursor,
+            last,
+            &ton_abi::contract::ABI_VERSION_2_1,
+            false,
+        )?;
 
         cursor = new_cursor;
         tokens.push(ton_abi::Token {

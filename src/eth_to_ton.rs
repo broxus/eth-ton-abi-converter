@@ -102,8 +102,12 @@ pub fn map_eth_tokens_to_ton_cell(
         .collect::<Result<Vec<ton_abi::TokenValue>>>()?;
 
     let cells = Vec::with_capacity(tokens.len());
-    ton_abi::TokenValue::pack_token_values_into_chain(&tokens, cells, 2)
-        .and_then(|builder| builder.into_cell())
+    ton_abi::TokenValue::pack_token_values_into_chain(
+        &tokens,
+        cells,
+        ton_abi::contract::ABI_VERSION_2_1,
+    )
+    .and_then(|builder| builder.into_cell())
 }
 
 #[derive(Default, Copy, Clone, Deserialize)]
@@ -234,7 +238,7 @@ pub fn map_eth_token_to_ton(
                     ton_abi::TokenValue::pack_token_values_into_chain(
                         &tokens,
                         Default::default(),
-                        2,
+                        ton_abi::contract::ABI_VERSION_2_1,
                     )?
                     .into(),
                 )
