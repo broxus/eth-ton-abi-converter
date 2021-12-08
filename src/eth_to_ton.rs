@@ -5,7 +5,7 @@ use serde::Deserialize;
 use crate::AbiMappingError;
 
 pub struct EthEventAbi {
-    event: ethabi::Event,
+    topic_hash: ethabi::Hash,
     params: Vec<ethabi::ParamType>,
 }
 
@@ -13,11 +13,12 @@ impl EthEventAbi {
     pub fn new(abi: &str) -> Result<Self> {
         let event = decode_eth_event_abi(abi)?;
         let params = event.inputs.iter().map(|item| item.kind.clone()).collect();
-        Ok(Self { event, params })
+        let topic_hash = event.signature();
+        Ok(Self { topic_hash, params })
     }
 
-    pub fn get_eth_topic_hash(&self) -> [u8; 32] {
-        self.event.signature().to_fixed_bytes()
+    pub fn get_eth_topic_hash(&self) -> &ethabi::Hash {
+        &self.topic_hash
     }
 
     pub fn decode_and_map(&self, data: &[u8]) -> Result<ton_types::Cell> {
