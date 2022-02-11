@@ -1,3 +1,5 @@
+#![allow(clippy::unused_unit)]
+
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::{JsCast, JsValue};
 
