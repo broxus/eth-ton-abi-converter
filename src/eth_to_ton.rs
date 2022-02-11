@@ -106,7 +106,7 @@ pub fn map_eth_tokens_to_ton_cell(
     ton_abi::TokenValue::pack_token_values_into_chain(
         &tokens,
         cells,
-        ton_abi::contract::ABI_VERSION_2_1,
+        ton_abi::contract::ABI_VERSION_2_2,
     )
     .and_then(|builder| builder.into_cell())
 }
@@ -239,7 +239,7 @@ pub fn map_eth_token_to_ton(
                     ton_abi::TokenValue::pack_token_values_into_chain(
                         &tokens,
                         Default::default(),
-                        ton_abi::contract::ABI_VERSION_2_1,
+                        ton_abi::contract::ABI_VERSION_2_2,
                     )?
                     .into(),
                 )

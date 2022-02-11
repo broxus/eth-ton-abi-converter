@@ -51,7 +51,7 @@ pub fn unpack_from_cell(
             &param.kind,
             cursor,
             last,
-            &ton_abi::contract::ABI_VERSION_2_1,
+            &ton_abi::contract::ABI_VERSION_2_2,
             false,
         )?;
 
