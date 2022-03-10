@@ -15,8 +15,7 @@ pub fn map_ton_cell_into_eth_bytes(abi: &str, boc: &str) -> Result<String, JsVal
 
     // Parse boc
     let boc = base64::decode(boc).handle_error()?;
-    let cell =
-        ton_types::deserialize_tree_of_cells(&mut std::io::Cursor::new(&boc)).handle_error()?;
+    let cell = ton_types::deserialize_tree_of_cells(&mut boc.as_slice()).handle_error()?;
 
     // Unpack tokens
     let tokens = unpack_from_cell(&params, cell.into()).handle_error()?;
