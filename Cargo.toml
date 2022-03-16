@@ -4,9 +4,6 @@ version = "0.3.0"
 authors = ["Ivan Kalinin <i.kalinin@dexpa.io>"]
 edition = "2021"
 
-[lib]
-crate-type = ["lib", "cdylib"]
-
 [workspace]
 members = ["bindings"]
 
@@ -29,3 +26,6 @@ ton_types = { git = "https://github.com/broxus/ton-labs-types.git" }
 
 [profile.release]
 opt-level = "s"
+
+[features]
+web = ["ton_abi/web"]
