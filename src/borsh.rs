@@ -11,7 +11,7 @@ use ton_abi::{ParamType, TokenValue};
 use ton_block::{Deserializable, Grams, MsgAddress};
 use ton_types::Cell;
 
-struct TokenWrapper<'a>(&'a ton_abi::TokenValue);
+pub struct TokenWrapper<'a>(&'a ton_abi::TokenValue);
 
 impl<'a> BorshSerialize for TokenWrapper<'a> {
     fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
@@ -294,7 +294,7 @@ fn read_any_int(buf: &mut &[u8]) -> anyhow::Result<ton_abi::TokenValue> {
     })
 }
 
-struct TokenWrapperOwned(ton_abi::TokenValue);
+pub struct TokenWrapperOwned(ton_abi::TokenValue);
 
 impl BorshSerialize for TokenWrapperOwned {
     fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
@@ -303,10 +303,31 @@ impl BorshSerialize for TokenWrapperOwned {
     }
 }
 
-pub fn deserialize_token_wrapper(
+pub fn serialize_tokens(tokens: &[ton_abi::TokenValue]) -> anyhow::Result<Vec<u8>> {
+    let tokens_wrapped = tokens
+        .iter()
+        .map(|t| TokenWrapperOwned(t.clone()))
+        .collect::<Vec<_>>();
+    let serialized = borsh::BorshSerialize::try_to_vec(&tokens_wrapped)?;
+
+    Ok(serialized)
+}
+
+pub fn deserialize_with_abi(
     reader: &mut &[u8],
-    ty: &ton_abi::ParamType,
-) -> anyhow::Result<TokenValue> {
+    types: &[ton_abi::ParamType],
+) -> anyhow::Result<Vec<ton_abi::TokenValue>> {
+    let mut tokens = Vec::with_capacity(types.len());
+
+    for ty in types {
+        let token = deserialize(reader, ty)?;
+        tokens.push(token);
+    }
+
+    Ok(tokens)
+}
+
+pub fn deserialize(reader: &mut &[u8], ty: &ton_abi::ParamType) -> anyhow::Result<TokenValue> {
     match ty {
         ParamType::Uint(_) => {
             let value = read_any_int(reader)?;
@@ -331,7 +352,7 @@ pub fn deserialize_token_wrapper(
         ParamType::Tuple(a) => {
             let mut tokens = Vec::with_capacity(a.len());
             for token in a {
-                let value = deserialize_token_wrapper(reader, &token.kind)?;
+                let value = deserialize(reader, &token.kind)?;
                 let token = ton_abi::Token::new(&token.name, value);
                 tokens.push(token);
             }
@@ -342,7 +363,7 @@ pub fn deserialize_token_wrapper(
             let size: u32 = u32::deserialize(reader)?;
             let mut tokens = Vec::with_capacity(size as usize);
             for _ in 0..size {
-                let value = deserialize_token_wrapper(reader, ty)?;
+                let value = deserialize(reader, ty)?;
                 tokens.push(value);
             }
             Ok(TokenValue::Array(*ty.clone(), tokens))
@@ -351,7 +372,7 @@ pub fn deserialize_token_wrapper(
             let mut tokens = Vec::with_capacity(*size);
 
             for _ in 0..*size {
-                let value = deserialize_token_wrapper(reader, ty)?;
+                let value = deserialize(reader, ty)?;
                 tokens.push(value);
             }
             Ok(TokenValue::FixedArray(*ty.clone(), tokens))
@@ -365,8 +386,8 @@ pub fn deserialize_token_wrapper(
             let size: u32 = u32::deserialize(reader)?;
             let mut tokens = BTreeMap::new();
             for _ in 0..size {
-                let key = deserialize_token_wrapper(reader, a)?.to_string();
-                let value = deserialize_token_wrapper(reader, b)?;
+                let key = deserialize(reader, a)?.to_string();
+                let value = deserialize(reader, b)?;
                 tokens.insert(key, value);
             }
             Ok(TokenValue::Map(*a.clone(), *b.clone(), tokens))
@@ -416,14 +437,14 @@ pub fn deserialize_token_wrapper(
         ParamType::Optional(ty) => {
             let is_set = bool::deserialize(reader)?;
             if is_set {
-                let value = deserialize_token_wrapper(reader, ty)?;
+                let value = deserialize(reader, ty)?;
                 Ok(TokenValue::Optional(*ty.clone(), Some(Box::new(value))))
             } else {
                 Ok(TokenValue::Optional(*ty.clone(), None))
             }
         }
         ParamType::Ref(a) => {
-            let value = deserialize_token_wrapper(reader, a)?;
+            let value = deserialize(reader, a)?;
             Ok(TokenValue::Ref(Box::new(value)))
         }
     }
