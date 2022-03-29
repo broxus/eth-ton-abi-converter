@@ -402,7 +402,8 @@ pub fn deserialize(reader: &mut &[u8], ty: &ton_abi::ParamType) -> anyhow::Resul
             Ok(TokenValue::Bytes(bytes))
         }
         ParamType::FixedBytes(size) => {
-            let mut buf = Vec::with_capacity(*size);
+            let mut buf = vec![0; *size as usize];
+
             reader.read_exact(&mut buf)?;
             Ok(TokenValue::Bytes(buf))
         }
