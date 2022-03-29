@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::convert::TryInto;
-use std::io::Write;
+use std::io::{Read, Write};
 
 use anyhow::Context;
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -401,9 +401,10 @@ pub fn deserialize(reader: &mut &[u8], ty: &ton_abi::ParamType) -> anyhow::Resul
             let bytes: Vec<u8> = Vec::deserialize(reader)?;
             Ok(TokenValue::Bytes(bytes))
         }
-        ParamType::FixedBytes(_) => {
-            let bytes: Vec<u8> = Vec::deserialize(reader)?;
-            Ok(TokenValue::Bytes(bytes))
+        ParamType::FixedBytes(size) => {
+            let mut buf = Vec::with_capacity(*size);
+            reader.read_exact(&mut buf)?;
+            Ok(TokenValue::Bytes(buf))
         }
         ParamType::String => {
             let string = String::deserialize(reader)?;
