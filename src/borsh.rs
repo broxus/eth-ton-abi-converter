@@ -36,9 +36,6 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
                 bool.serialize(writer)?;
             }
             TokenValue::Tuple(tuple) => {
-                let size = tuple.len() as u32;
-                size.serialize(writer)?;
-
                 for token in tuple {
                     let token = TokenWrapper(&token.value);
                     token.serialize(writer)?;
@@ -64,6 +61,7 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
             }
             TokenValue::Map(_, _, map) => {
                 map.len().serialize(writer)?;
+                todo!("types");
                 for (key, value) in map.iter() {
                     key.serialize(writer)?;
                     TokenWrapper(value).serialize(writer)?;
@@ -72,7 +70,7 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
             TokenValue::Address(add) => {
                 match add {
                     MsgAddress::AddrStd(ad) => {
-                        0u8.serialize(writer)?;
+                        0u8.serialize(writer)?; //discriminant
                         ad.workchain_id.serialize(writer)?;
                         let addr = ton_block::Serializable::write_to_bytes(&ad.address)
                             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
@@ -90,7 +88,7 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
                 bytes.serialize(writer)?;
             }
             TokenValue::FixedBytes(bytes) => {
-                bytes.serialize(writer)?;
+                writer.write_all(&bytes)?;
             }
             TokenValue::String(str) => {
                 str.serialize(writer)?;
@@ -156,8 +154,6 @@ where
     W: Write,
     F: FnOnce() -> Vec<u8>,
 {
-    size.serialize(writer)?;
-    signed.serialize(writer)?;
     // Don't edit it's a generated code
     match size {
         0..=8 => {
@@ -233,10 +229,7 @@ where
     Ok(())
 }
 
-fn read_any_int(buf: &mut &[u8]) -> anyhow::Result<ton_abi::TokenValue> {
-    let size = u16::deserialize(buf)?;
-    let signed = bool::deserialize(buf)?;
-
+fn read_any_int(buf: &mut &[u8], size: usize, signed: bool) -> anyhow::Result<ton_abi::TokenValue> {
     let any_int = match size {
         0..=8 => {
             if signed {
@@ -329,20 +322,20 @@ pub fn deserialize_with_abi(
 
 pub fn deserialize(reader: &mut &[u8], ty: &ton_abi::ParamType) -> anyhow::Result<TokenValue> {
     match ty {
-        ParamType::Uint(_) => {
-            let value = read_any_int(reader)?;
+        ParamType::Uint(size) => {
+            let value = read_any_int(reader, *size, false)?;
             Ok(value)
         }
-        ParamType::Int(_) => {
-            let value = read_any_int(reader)?;
+        ParamType::Int(size) => {
+            let value = read_any_int(reader, *size, true)?;
             Ok(value)
         }
-        ParamType::VarUint(_) => {
-            let value = read_any_int(reader)?;
+        ParamType::VarUint(size) => {
+            let value = read_any_int(reader, *size, false)?;
             Ok(value)
         }
-        ParamType::VarInt(_) => {
-            let value = read_any_int(reader)?;
+        ParamType::VarInt(size) => {
+            let value = read_any_int(reader, *size, true)?;
             Ok(value)
         }
         ParamType::Bool => {
@@ -461,27 +454,27 @@ mod test {
             let mut $buf = vec![];
             paste! {
                 generate_test!(@signed i, $size,  [<i $size>]::MAX, $buf, $number);
-                assert_eq!(read_any_int(&mut &$buf[..]).unwrap(), $number);
+                assert_eq!(read_any_int(&mut &$buf[..], $size as usize, true).unwrap(), $number);
                 $buf.clear();
 
                 generate_test!(@signed i, $size, [<i $size>]::MIN, $buf, $number);
-                assert_eq!(read_any_int(&mut &$buf[..]).unwrap(), $number);
+                assert_eq!(read_any_int(&mut &$buf[..], $size as usize, true).unwrap(), $number);
                 $buf.clear();
 
                 generate_test!(@signed i, $size, 0, $buf, $number);
-                assert_eq!(read_any_int(&mut &$buf[..]).unwrap(), $number);
+                assert_eq!(read_any_int(&mut &$buf[..], $size as usize, true).unwrap(), $number);
                 $buf.clear();
 
                 generate_test!(@signed u, $size, [<u $size>]::MAX, $buf, $number);
-                assert_eq!(read_any_int(&mut &$buf[..]).unwrap(), $number);
+                assert_eq!(read_any_int(&mut &$buf[..], $size as usize, false).unwrap(), $number);
                 $buf.clear();
 
                 generate_test!(@signed u, $size, [<u $size>]::MIN, $buf, $number);
-                assert_eq!(read_any_int(&mut &$buf[..]).unwrap(), $number);
+                assert_eq!(read_any_int(&mut &$buf[..], $size as usize, false).unwrap(), $number);
                 $buf.clear();
 
                 generate_test!(@signed u, $size, 0, $buf, $number);
-                assert_eq!(read_any_int(&mut &$buf[..]).unwrap(), $number);
+                assert_eq!(read_any_int(&mut &$buf[..], $size as usize, false).unwrap(), $number);
                 $buf.clear();
             }
         };
