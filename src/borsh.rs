@@ -72,9 +72,8 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
                     MsgAddress::AddrStd(ad) => {
                         0u8.serialize(writer)?; //discriminant
                         ad.workchain_id.serialize(writer)?;
-                        let addr = ton_block::Serializable::write_to_bytes(&ad.address)
-                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-                        addr.serialize(writer)?;
+                        let address: Vec<u8> = ad.address.get_bytestring(0);
+                        address.serialize(writer)?;
                     }
                     _ => {
                         return Err(std::io::Error::new(
@@ -297,13 +296,13 @@ impl BorshSerialize for TokenWrapperOwned {
 }
 
 pub fn serialize_tokens(tokens: &[ton_abi::TokenValue]) -> anyhow::Result<Vec<u8>> {
-    let tokens_wrapped = tokens
-        .iter()
-        .map(|t| TokenWrapperOwned(t.clone()))
-        .collect::<Vec<_>>();
-    let serialized = borsh::BorshSerialize::try_to_vec(&tokens_wrapped)?;
+    let tokens_wrapped = tokens.iter().map(|t| TokenWrapperOwned(t.clone()));
+    let mut writer = Vec::with_capacity(128);
+    for token in tokens_wrapped {
+        token.serialize(&mut writer)?;
+    }
 
-    Ok(serialized)
+    Ok(writer)
 }
 
 pub fn deserialize_with_abi(
@@ -448,6 +447,8 @@ pub fn deserialize(reader: &mut &[u8], ty: &ton_abi::ParamType) -> anyhow::Resul
 #[cfg(test)]
 mod test {
     use paste::paste;
+    use std::str::FromStr;
+    use ton_block::MsgAddressInt;
 
     use super::*;
 
@@ -513,5 +514,25 @@ mod test {
         generate_test!(32, buf, num_name);
         generate_test!(64, buf, num_name);
         generate_test!(128, buf, num_name);
+    }
+
+    #[test]
+    fn test_address() {
+        let addr = match MsgAddressInt::from_str(
+            "0:8e2586602513e99a55fa2be08561469c7ce51a7d5a25977558e77ef2bc9387b4",
+        )
+        .unwrap()
+        {
+            MsgAddressInt::AddrStd(x) => x,
+            _ => panic!("wrong address"),
+        };
+        let token = TokenValue::Address(MsgAddress::AddrStd(addr));
+        let tokens = vec![token];
+        let packed = super::serialize_tokens(&tokens).unwrap();
+        dbg!(&packed);
+        let unpacked =
+            super::deserialize_with_abi(&mut &packed[..], &[ParamType::Address]).unwrap();
+
+        assert_eq!(unpacked, tokens);
     }
 }
