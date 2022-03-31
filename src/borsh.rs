@@ -404,7 +404,7 @@ pub fn deserialize(reader: &mut &[u8], ty: &ton_abi::ParamType) -> anyhow::Resul
             let mut buf = vec![0; *size as usize];
 
             reader.read_exact(&mut buf)?;
-            Ok(TokenValue::Bytes(buf))
+            Ok(TokenValue::FixedBytes(buf))
         }
         ParamType::String => {
             let string = String::deserialize(reader)?;
