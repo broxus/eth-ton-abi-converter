@@ -16,6 +16,7 @@ pub struct TokenWrapper<'a>(&'a ton_abi::TokenValue);
 impl<'a> BorshSerialize for TokenWrapper<'a> {
     fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
         match &self.0 {
+            // TODO: fill with zeros
             TokenValue::Uint(uint) => {
                 map_any_int(writer, uint.number.clone(), false, uint.size, || {
                     uint.number.to_bytes_le()
@@ -73,7 +74,7 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
                         0u8.serialize(writer)?; //discriminant
                         ad.workchain_id.serialize(writer)?;
                         let address: Vec<u8> = ad.address.get_bytestring(0);
-                        address.serialize(writer)?;
+                        writer.write_all(&address)?;
                     }
                     _ => {
                         return Err(std::io::Error::new(
@@ -389,7 +390,7 @@ pub fn deserialize(reader: &mut &[u8], ty: &ton_abi::ParamType) -> anyhow::Resul
             let ty: u8 = u8::deserialize(reader)?;
             if ty == 0 {
                 let wc: i8 = i8::deserialize(reader)?;
-                let address = Vec::<u8>::deserialize(reader)?;
+                let address = <[u8; 32]>::deserialize(reader)?;
 
                 let address = ton_block::MsgAddrStd::with_address(None, wc, address.into());
                 Ok(TokenValue::Address(ton_block::MsgAddress::AddrStd(address)))
