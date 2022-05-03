@@ -266,10 +266,11 @@ fn read_any_int(buf: &mut &[u8], size: usize, signed: bool) -> anyhow::Result<to
             }
         }
         _ => {
+            let buf: Vec<u8> = Vec::deserialize(buf)?;
             if signed {
-                Either::Left(BigInt::from_signed_bytes_le(buf))
+                Either::Left(BigInt::from_signed_bytes_le(&buf))
             } else {
-                Either::Right(BigUint::from_bytes_le(buf))
+                Either::Right(BigUint::from_bytes_le(&buf))
             }
         }
     };
@@ -534,5 +535,18 @@ mod test {
             super::deserialize_with_abi(&mut &packed[..], &[ParamType::Address]).unwrap();
 
         assert_eq!(unpacked, tokens);
+    }
+
+    #[test]
+    fn test_huge_ints() {
+        let uint = ton_abi::Uint {
+            number: BigUint::from(u128::max_value()),
+            size: 256,
+        };
+        let bytes = serialize_tokens(&[TokenValue::Uint(uint.clone())]).unwrap();
+        let got = deserialize_with_abi(&mut &bytes[..], &[ParamType::Uint(256)])
+            .unwrap()
+            .remove(0);
+        assert_eq!(got, TokenValue::Uint(uint));
     }
 }
