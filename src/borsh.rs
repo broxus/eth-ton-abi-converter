@@ -20,36 +20,42 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
             TokenValue::Uint(uint) => {
                 map_any_int(writer, uint.number.clone(), false, uint.size, || {
                     let mut encoded = uint.number.to_bytes_le();
-                    resize_left(&mut encoded, uint.size);
+                    encoded.resize(uint.size, 0);
                     encoded
                 })?;
             }
             TokenValue::Int(int) => {
                 map_any_int(writer, int.number.clone(), true, int.size, || {
                     let (sign, mut bytes) = int.number.to_bytes_le();
-                    resize_left(&mut bytes, int.size + 1);
-                    bytes[0] = match sign {
+                    let mut res = Vec::with_capacity(int.size + 1);
+                    let sign = match sign {
                         Sign::NoSign => 0,
                         Sign::Plus => 1,
                         Sign::Minus => 2,
                     };
-                    bytes
+                    res.push(sign);
+                    bytes.resize(int.size / 8, 0);
+                    res.extend(bytes);
+                    res
                 })?;
             }
             TokenValue::VarInt(size, int) => map_any_int(writer, int.clone(), true, *size, || {
                 let (sign, mut bytes) = int.to_bytes_le();
-                resize_left(&mut bytes, size + 1);
-                bytes[0] = match sign {
+                let mut res = Vec::with_capacity(size + 1);
+                let sign = match sign {
                     Sign::NoSign => 0,
                     Sign::Plus => 1,
                     Sign::Minus => 2,
                 };
-                bytes
+                res.push(sign);
+                bytes.resize(size / 8, 0);
+                res.extend(bytes);
+                res
             })?,
             TokenValue::VarUint(size, uint) => {
                 map_any_int(writer, uint.clone(), false, *size, || {
                     let mut encoded = uint.to_bytes_le();
-                    resize_left(&mut encoded, *size);
+                    encoded.resize(size / 8, 0);
                     encoded
                 })?;
             }
@@ -141,17 +147,6 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
         }
         Ok(())
     }
-}
-
-fn resize_left(bytes: &mut Vec<u8>, new_size: usize) {
-    let new_size = new_size / 8;
-    let size = bytes.len();
-    if size < new_size {
-        bytes.resize(new_size, 0);
-    }
-    let mut new_bytes = vec![0u8; new_size - size];
-    new_bytes.extend_from_slice(bytes);
-    *bytes = new_bytes;
 }
 
 fn map_any_int<W, F>(
@@ -306,10 +301,9 @@ fn read_any_int(buf: &mut &[u8], size: usize, signed: bool) -> anyhow::Result<to
                     2 => Sign::Minus,
                     s => anyhow::bail!("Bad sign {}", s),
                 };
-                let buf: Vec<u8> = buf[1..].iter().copied().skip_while(|x| *x == 0).collect();
-                Either::Left(BigInt::from_bytes_le(sign, &buf))
+                let buf = &buf[1..];
+                Either::Left(BigInt::from_bytes_le(sign, buf))
             } else {
-                let buf = buf.into_iter().skip_while(|&x| x == 0).collect::<Vec<_>>();
                 Either::Right(BigUint::from_bytes_le(&buf))
             }
         }
