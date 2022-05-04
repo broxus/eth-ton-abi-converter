@@ -144,6 +144,7 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
 }
 
 fn resize_left(bytes: &mut Vec<u8>, new_size: usize) {
+    let new_size = new_size / 8;
     let size = bytes.len();
     if size < new_size {
         bytes.resize(new_size, 0);
