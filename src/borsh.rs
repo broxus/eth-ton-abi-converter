@@ -19,7 +19,6 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
             // TODO: fill with zeros
             TokenValue::Uint(uint) => {
                 map_any_int(writer, uint.number.clone(), false, uint.size, || {
-                    println!("Uint: {}", uint.number);
                     let mut buf = vec![0; uint.size / 8];
                     for (l, r) in buf
                         .iter_mut()
