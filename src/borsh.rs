@@ -16,7 +16,6 @@ pub struct TokenWrapper<'a>(&'a ton_abi::TokenValue);
 impl<'a> BorshSerialize for TokenWrapper<'a> {
     fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
         match &self.0 {
-            // TODO: fill with zeros
             TokenValue::Uint(uint) => {
                 map_any_int(writer, uint.number.clone(), false, uint.size, || {
                     let mut buf = vec![0; uint.size / 8];
@@ -97,13 +96,11 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
                 cell_bytes.serialize(writer)?;
             }
-            TokenValue::Map(_, _, map) => {
-                map.len().serialize(writer)?;
-                todo!("types");
-                for (key, value) in map.iter() {
-                    key.serialize(writer)?;
-                    TokenWrapper(value).serialize(writer)?;
-                }
+            TokenValue::Map(_, _, _map) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Unimplemented",
+                ))
             }
             TokenValue::Address(add) => {
                 match add {
