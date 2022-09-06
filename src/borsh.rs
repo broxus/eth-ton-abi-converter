@@ -1,106 +1,109 @@
 use std::collections::BTreeMap;
-use std::convert::TryInto;
 use std::io::{Read, Write};
 
-use anyhow::Context;
 use borsh::{BorshDeserialize, BorshSerialize};
 use either::Either;
 use num_bigint::{BigInt, BigUint, Sign};
-use num_traits::ToPrimitive;
 use ton_abi::{ParamType, TokenValue};
 use ton_block::{Deserializable, Grams, MsgAddress};
 use ton_types::Cell;
 
-pub struct TokenWrapper<'a>(&'a ton_abi::TokenValue);
+pub struct TokenWrapper<'a>(&'a TokenValue);
 
 impl<'a> BorshSerialize for TokenWrapper<'a> {
     fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
         match &self.0 {
             TokenValue::Uint(uint) => {
-                map_any_int(writer, uint.number.clone(), false, uint.size, || {
-                    let mut buf = vec![0; uint.size / 8];
-                    for (l, r) in buf
-                        .iter_mut()
-                        .rev()
-                        .zip(uint.number.to_bytes_be().into_iter().rev())
-                    {
+                let mut number = uint.number.to_bytes_le();
+                let number = if uint.size <= MAX_SMALL_INT_SIZE {
+                    number.resize(small_int_size(uint.size), 0);
+                    number
+                } else {
+                    let mut buffer = vec![0; (uint.size + 7) / 8];
+                    for (l, r) in buffer.iter_mut().rev().zip(number.into_iter()) {
                         *l = r;
                     }
-                    buf
-                })?;
+                    buffer
+                };
+                writer.write(&number)?;
+                Ok(())
             }
             TokenValue::Int(int) => {
-                map_any_int(writer, int.number.clone(), true, int.size, || {
-                    let sign = int.number.sign();
-                    let mut buf = vec![0; int.size / 8 + 1];
-                    let sign = match sign {
-                        Sign::NoSign => 0,
-                        Sign::Plus => 1,
-                        Sign::Minus => 2,
-                    };
-                    buf[0] = sign;
-                    for (l, r) in buf
-                        .iter_mut()
-                        .rev()
-                        .zip(int.number.to_bytes_be().1.into_iter().rev())
-                    {
+                let mut number = int.number.to_signed_bytes_le();
+                let padding: u8 = if int.number.sign() == Sign::Minus {
+                    0xff
+                } else {
+                    0
+                };
+
+                let number = if int.size <= MAX_SMALL_INT_SIZE {
+                    number.resize(small_int_size(int.size), padding);
+                    number
+                } else {
+                    let mut buffer = vec![padding; (int.size + 7) / 8];
+                    for (l, r) in buffer.iter_mut().rev().zip(number.into_iter()) {
                         *l = r;
                     }
-                    buf
-                })?;
-            }
-            TokenValue::VarInt(size, int) => map_any_int(writer, int.clone(), true, *size, || {
-                let (sign, mut bytes) = int.to_bytes_be();
-                let mut res = Vec::with_capacity(size + 1);
-                let sign = match sign {
-                    Sign::NoSign => 0,
-                    Sign::Plus => 1,
-                    Sign::Minus => 2,
+                    buffer
                 };
-                res.push(sign);
-                bytes.resize(size / 8, 0);
-                res.extend(bytes);
-                res
-            })?,
-            TokenValue::VarUint(size, uint) => {
-                map_any_int(writer, uint.clone(), false, *size, || {
-                    let mut encoded = uint.to_bytes_be();
-                    encoded.resize(size / 8, 0);
-                    encoded
-                })?;
+                writer.write(&number)?;
+                Ok(())
             }
-            TokenValue::Bool(bool) => {
-                bool.serialize(writer)?;
+            TokenValue::VarInt(_, int) => {
+                let bytes = int.to_signed_bytes_le();
+                let mut number = Vec::with_capacity(1 + bytes.len());
+                number.push(bytes.len() as u8);
+                number.extend_from_slice(&bytes);
+                writer.write(&number)?;
+                Ok(())
             }
+            TokenValue::VarUint(_, uint) => {
+                let bytes = uint.to_bytes_le();
+                let mut number = Vec::with_capacity(1 + bytes.len());
+                number.push(bytes.len() as u8);
+                number.extend_from_slice(&bytes);
+                writer.write(&number)?;
+                Ok(())
+            }
+            TokenValue::Bool(bool) => bool.serialize(writer),
             TokenValue::Tuple(tuple) => {
                 for token in tuple {
-                    let token = TokenWrapper(&token.value);
-                    token.serialize(writer)?;
+                    TokenWrapper(&token.value).serialize(writer)?;
                 }
+                Ok(())
             }
             TokenValue::Array(_, vec) => {
                 let size = vec.len() as u32;
                 size.serialize(writer)?;
-
                 for item in vec {
-                    (TokenWrapper(item)).serialize(writer)?;
+                    TokenWrapper(item).serialize(writer)?;
                 }
+                Ok(())
             }
             TokenValue::FixedArray(_, vec) => {
                 for item in vec {
-                    (TokenWrapper(item)).serialize(writer)?;
+                    TokenWrapper(item).serialize(writer)?;
                 }
+                Ok(())
             }
             TokenValue::Cell(cell) => {
                 let cell_bytes = ton_block::Serializable::write_to_bytes(cell)
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-                cell_bytes.serialize(writer)?;
+                cell_bytes.serialize(writer)
             }
-            TokenValue::Map(_, _, _map) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Unimplemented",
-                ))
+            TokenValue::Map(key_type, _, map) => {
+                let size = map.len() as u32;
+                size.serialize(writer)?;
+                for (item, value) in map {
+                    let key = ton_abi::token::Tokenizer::tokenize_parameter(
+                        key_type,
+                        &item.clone().into(),
+                    )
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                    TokenWrapper(&key).serialize(writer)?;
+                    TokenWrapper(value).serialize(writer)?;
+                }
+                Ok(())
             }
             TokenValue::Address(add) => {
                 match add {
@@ -108,162 +111,49 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
                         0u8.serialize(writer)?; //discriminant
                         ad.workchain_id.serialize(writer)?;
                         let address: Vec<u8> = ad.address.get_bytestring(0);
-                        writer.write_all(&address)?;
+                        writer.write_all(&address)
                     }
-                    _ => {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            "Invalid address",
-                        ))
-                    }
-                };
+                    _ => Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Invalid address",
+                    )),
+                }
             }
-            TokenValue::Bytes(bytes) => {
-                bytes.serialize(writer)?;
-            }
-            TokenValue::FixedBytes(bytes) => {
-                writer.write_all(bytes)?;
-            }
-            TokenValue::String(str) => {
-                str.serialize(writer)?;
-            }
+            TokenValue::Bytes(bytes) => bytes.serialize(writer),
+            TokenValue::FixedBytes(bytes) => writer.write_all(bytes),
+            TokenValue::String(str) => str.serialize(writer),
             TokenValue::Token(token) => {
                 let value = token.0;
-                value.serialize(writer)?;
+                value.serialize(writer)
             }
-            TokenValue::Time(time) => {
-                time.serialize(writer)?;
-            }
-            TokenValue::Expire(exp) => {
-                exp.serialize(writer)?;
-            }
-            TokenValue::PublicKey(pubkey) => {
-                pubkey.map(|pk| pk.to_bytes()).serialize(writer)?;
-            }
+            TokenValue::Time(time) => time.serialize(writer),
+            TokenValue::Expire(exp) => exp.serialize(writer),
+            TokenValue::PublicKey(pubkey) => pubkey.map(|pk| pk.to_bytes()).serialize(writer),
             TokenValue::Optional(_, val) => match val {
-                None => {
-                    0u8.serialize(writer)?;
-                }
+                None => 0u8.serialize(writer),
                 Some(a) => {
                     1u8.serialize(writer)?;
-                    TokenWrapper(a).serialize(writer)?;
+                    TokenWrapper(a).serialize(writer)
                 }
             },
-            TokenValue::Ref(val) => {
-                TokenWrapper(val).serialize(writer)?;
-            }
+            TokenValue::Ref(val) => TokenWrapper(val).serialize(writer),
         }
-        Ok(())
     }
 }
 
-fn map_any_int<W, F>(
-    writer: &mut W,
-    any_int: impl ToPrimitive,
-    signed: bool,
-    size: usize,
-    bytes_factory: F,
-) -> std::io::Result<()>
-where
-    W: Write,
-    F: FnOnce() -> Vec<u8>,
-{
-    use std::io;
-    let size = size
-        .try_into()
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid size for integer"))?;
-    map_any_int_inner(writer, any_int, signed, size, bytes_factory)
-        .with_context(|| format!("Size: {}", size))
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
-}
+const MAX_SMALL_INT_SIZE: usize = 128;
 
-fn map_any_int_inner<W, F>(
-    writer: &mut W,
-    any_int: impl ToPrimitive,
-    signed: bool,
-    size: u16,
-    bytes_factory: F,
-) -> anyhow::Result<()>
-where
-    W: Write,
-    F: FnOnce() -> Vec<u8>,
-{
-    // Don't edit it's a generated code
+fn small_int_size(size: usize) -> usize {
     match size {
-        0..=8 => {
-            if signed {
-                any_int
-                    .to_i8()
-                    .context("Bad signed integer")?
-                    .serialize(writer)?
-            } else {
-                any_int
-                    .to_u8()
-                    .context("Bad unsigned integer")?
-                    .serialize(writer)?
-            }
-        }
-        9..=16 => {
-            if signed {
-                any_int
-                    .to_i16()
-                    .context("Bad signed integer")?
-                    .serialize(writer)?
-            } else {
-                any_int
-                    .to_u16()
-                    .context("Bad unsigned integer")?
-                    .serialize(writer)?
-            }
-        }
-        17..=32 => {
-            if signed {
-                any_int
-                    .to_i32()
-                    .context("Bad signed integer")?
-                    .serialize(writer)?
-            } else {
-                any_int
-                    .to_u32()
-                    .context("Bad unsigned integer")?
-                    .serialize(writer)?
-            }
-        }
-        33..=64 => {
-            if signed {
-                any_int
-                    .to_i64()
-                    .context("Bad signed integer")?
-                    .serialize(writer)?
-            } else {
-                any_int
-                    .to_u64()
-                    .context("Bad unsigned integer")?
-                    .serialize(writer)?
-            }
-        }
-        65..=128 => {
-            if signed {
-                any_int
-                    .to_i128()
-                    .context("Bad signed integer")?
-                    .serialize(writer)?
-            } else {
-                any_int
-                    .to_u128()
-                    .context("Bad unsigned integer")?
-                    .serialize(writer)?
-            }
-        }
-        _ => {
-            bytes_factory().serialize(writer)?;
-        }
-    };
-
-    Ok(())
+        0..=8 => 1,
+        9..=16 => 2,
+        17..=32 => 4,
+        33..=64 => 8,
+        _ => 16,
+    }
 }
 
-fn read_any_int(buf: &mut &[u8], size: usize, signed: bool) -> anyhow::Result<ton_abi::TokenValue> {
+fn read_any_int(buf: &mut &[u8], size: usize, signed: bool) -> anyhow::Result<TokenValue> {
     let any_int = match size {
         0..=8 => {
             if signed {
@@ -294,42 +184,41 @@ fn read_any_int(buf: &mut &[u8], size: usize, signed: bool) -> anyhow::Result<to
             }
         }
         65..=128 => {
+            let mut bytes = [0; 16];
+            buf.read_exact(&mut bytes)?;
+
             if signed {
-                Either::Left(BigInt::from(i128::deserialize(buf)?))
+                Either::Left(BigInt::from_signed_bytes_le(&bytes))
             } else {
-                Either::Right(BigUint::from(u128::deserialize(buf)?))
+                Either::Right(BigUint::from_bytes_le(&bytes))
             }
         }
         _ => {
-            let buf: Vec<u8> = Vec::deserialize(buf)?;
+            let mut bytes = [0; 32];
+            let bytes = &mut bytes[..(size + 7) / 8];
+            buf.read_exact(bytes)?;
+
             if signed {
-                let sign = match buf[0] {
-                    0 => Sign::NoSign,
-                    1 => Sign::Plus,
-                    2 => Sign::Minus,
-                    s => anyhow::bail!("Bad sign {}", s),
-                };
-                let buf = dbg!(&buf[1..]);
-                Either::Left(BigInt::from_bytes_be(sign, buf))
+                Either::Left(BigInt::from_signed_bytes_be(&bytes))
             } else {
-                Either::Right(BigUint::from_bytes_be(&buf))
+                Either::Right(BigUint::from_bytes_be(&bytes))
             }
         }
     };
 
     Ok(match any_int {
-        Either::Left(a) => ton_abi::TokenValue::Int(ton_abi::Int {
+        Either::Left(a) => TokenValue::Int(ton_abi::Int {
             number: a,
             size: size as usize,
         }),
-        Either::Right(b) => ton_abi::TokenValue::Uint(ton_abi::Uint {
+        Either::Right(b) => TokenValue::Uint(ton_abi::Uint {
             number: b,
             size: size as usize,
         }),
     })
 }
 
-pub struct TokenWrapperOwned(ton_abi::TokenValue);
+pub struct TokenWrapperOwned(TokenValue);
 
 impl BorshSerialize for TokenWrapperOwned {
     fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
@@ -338,7 +227,7 @@ impl BorshSerialize for TokenWrapperOwned {
     }
 }
 
-pub fn serialize_tokens(tokens: &[ton_abi::TokenValue]) -> anyhow::Result<Vec<u8>> {
+pub fn serialize_tokens(tokens: &[TokenValue]) -> anyhow::Result<Vec<u8>> {
     let tokens_wrapped = tokens.iter().map(|t| TokenWrapperOwned(t.clone()));
     let mut writer = Vec::with_capacity(128);
     for token in tokens_wrapped {
@@ -350,8 +239,8 @@ pub fn serialize_tokens(tokens: &[ton_abi::TokenValue]) -> anyhow::Result<Vec<u8
 
 pub fn deserialize_with_abi(
     reader: &mut &[u8],
-    types: &[ton_abi::ParamType],
-) -> anyhow::Result<Vec<ton_abi::TokenValue>> {
+    types: &[ParamType],
+) -> anyhow::Result<Vec<TokenValue>> {
     let mut tokens = Vec::with_capacity(types.len());
 
     for ty in types {
@@ -362,24 +251,12 @@ pub fn deserialize_with_abi(
     Ok(tokens)
 }
 
-pub fn deserialize(reader: &mut &[u8], ty: &ton_abi::ParamType) -> anyhow::Result<TokenValue> {
+pub fn deserialize(reader: &mut &[u8], ty: &ParamType) -> anyhow::Result<TokenValue> {
     match ty {
-        ParamType::Uint(size) => {
-            let value = read_any_int(reader, *size, false)?;
-            Ok(value)
-        }
-        ParamType::Int(size) => {
-            let value = read_any_int(reader, *size, true)?;
-            Ok(value)
-        }
-        ParamType::VarUint(size) => {
-            let value = read_any_int(reader, *size, false)?;
-            Ok(value)
-        }
-        ParamType::VarInt(size) => {
-            let value = read_any_int(reader, *size, true)?;
-            Ok(value)
-        }
+        ParamType::Uint(size) => read_any_int(reader, *size, false),
+        ParamType::Int(size) => read_any_int(reader, *size, true),
+        ParamType::VarUint(size) => read_any_int(reader, *size, false),
+        ParamType::VarInt(size) => read_any_int(reader, *size, true),
         ParamType::Bool => {
             let bool = bool::deserialize(reader)?;
             Ok(TokenValue::Bool(bool))
@@ -391,7 +268,6 @@ pub fn deserialize(reader: &mut &[u8], ty: &ton_abi::ParamType) -> anyhow::Resul
                 let token = ton_abi::Token::new(&token.name, value);
                 tokens.push(token);
             }
-
             Ok(TokenValue::Tuple(tokens))
         }
         ParamType::Array(ty) => {
@@ -405,7 +281,6 @@ pub fn deserialize(reader: &mut &[u8], ty: &ton_abi::ParamType) -> anyhow::Resul
         }
         ParamType::FixedArray(ty, size) => {
             let mut tokens = Vec::with_capacity(*size);
-
             for _ in 0..*size {
                 let value = deserialize(reader, ty)?;
                 tokens.push(value);
@@ -413,12 +288,12 @@ pub fn deserialize(reader: &mut &[u8], ty: &ton_abi::ParamType) -> anyhow::Resul
             Ok(TokenValue::FixedArray(*ty.clone(), tokens))
         }
         ParamType::Cell => {
-            let bytes: Vec<u8> = Vec::deserialize(reader)?;
+            let bytes = Vec::deserialize(reader)?;
             let cell = Cell::construct_from_bytes(&bytes)?;
             Ok(TokenValue::Cell(cell))
         }
         ParamType::Map(a, b) => {
-            let size: u32 = u32::deserialize(reader)?;
+            let size = u32::deserialize(reader)?;
             let mut tokens = BTreeMap::new();
             for _ in 0..size {
                 let key = deserialize(reader, a)?.to_string();
@@ -431,21 +306,20 @@ pub fn deserialize(reader: &mut &[u8], ty: &ton_abi::ParamType) -> anyhow::Resul
             let ty: u8 = u8::deserialize(reader)?;
             if ty == 0 {
                 let wc: i8 = i8::deserialize(reader)?;
-                let address = <[u8; 32]>::deserialize(reader)?;
+                let address = <[u8; 32] as BorshDeserialize>::deserialize(reader)?;
 
                 let address = ton_block::MsgAddrStd::with_address(None, wc, address.into());
-                Ok(TokenValue::Address(ton_block::MsgAddress::AddrStd(address)))
+                Ok(TokenValue::Address(MsgAddress::AddrStd(address)))
             } else {
                 anyhow::bail!("unsupported address type")
             }
         }
         ParamType::Bytes => {
-            let bytes: Vec<u8> = Vec::deserialize(reader)?;
+            let bytes = Vec::deserialize(reader)?;
             Ok(TokenValue::Bytes(bytes))
         }
         ParamType::FixedBytes(size) => {
             let mut buf = vec![0; *size as usize];
-
             reader.read_exact(&mut buf)?;
             Ok(TokenValue::FixedBytes(buf))
         }
@@ -466,10 +340,11 @@ pub fn deserialize(reader: &mut &[u8], ty: &ton_abi::ParamType) -> anyhow::Resul
             Ok(TokenValue::Expire(expire))
         }
         ParamType::PublicKey => {
-            let bytes: Option<Vec<u8>> = BorshDeserialize::deserialize(reader)?;
-            let bytes = bytes.and_then(|x| ed25519_dalek::PublicKey::from_bytes(&x).ok());
-
-            Ok(TokenValue::PublicKey(bytes))
+            let bytes: Option<[u8; 32]> = BorshDeserialize::deserialize(reader)?;
+            let pubkey = bytes
+                .map(|x| ed25519_dalek::PublicKey::from_bytes(&x))
+                .transpose()?;
+            Ok(TokenValue::PublicKey(pubkey))
         }
         ParamType::Optional(ty) => {
             let is_set = bool::deserialize(reader)?;
@@ -489,7 +364,6 @@ pub fn deserialize(reader: &mut &[u8], ty: &ton_abi::ParamType) -> anyhow::Resul
 
 #[cfg(test)]
 mod test {
-    use crate::decode_ton_event_abi;
     use paste::paste;
     use std::str::FromStr;
     use ton_block::MsgAddressInt;
@@ -527,26 +401,24 @@ mod test {
         };
         (@signed i, $size:literal, $num:expr, $buf:ident, $number:ident) => {
             paste! {
-                let $number =  ton_abi::TokenValue::Int(
+                let $number = ton_abi::TokenValue::Int(
                     ton_abi::Int {
                         number: BigInt::from($num as [<i $size>]),
                         size: $size as usize,
-                    });
-                map_any_int(&mut $buf,  BigInt::from($num as [<i $size>]), true, $size, || {
-                   BigInt::from($num as [<u $size>]).to_signed_bytes_be()
-                }).unwrap();
+                    }
+                );
+                TokenWrapper(&$number).serialize(&mut $buf).unwrap();
             }
         };
         (@signed u,  $size:literal, $num:expr, $buf:ident, $number:ident) => {
             paste! {
-                let $number =  ton_abi::TokenValue::Uint(
+                let $number = ton_abi::TokenValue::Uint(
                     ton_abi::Uint {
                         number: BigUint::from($num as [<u $size>]),
                         size: $size as usize,
-                    });
-                map_any_int(&mut $buf, BigUint::from($num as [<u $size>]), false, $size, || {
-                   BigUint::from($num as [<u $size>]).to_bytes_be()
-                }).unwrap();
+                    }
+                );
+                TokenWrapper(&$number).serialize(&mut $buf).unwrap();
             }
         };
     }
@@ -583,7 +455,7 @@ mod test {
     #[test]
     fn test_huge_ints() {
         let uint = ton_abi::Uint {
-            number: BigUint::from(u128::max_value()),
+            number: BigUint::from(u128::MAX),
             size: 256,
         };
         let bytes = serialize_tokens(&[TokenValue::Uint(uint.clone())]).unwrap();
@@ -593,7 +465,7 @@ mod test {
         assert_eq!(got.to_string(), TokenValue::Uint(uint).to_string());
 
         let uint = ton_abi::Uint {
-            number: BigUint::from(u128::min_value()),
+            number: BigUint::from(u128::MIN),
             size: 256,
         };
         let bytes = serialize_tokens(&[TokenValue::Uint(uint.clone())]).unwrap();
