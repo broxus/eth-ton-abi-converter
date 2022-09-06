@@ -24,6 +24,12 @@ ton_abi = { git = "https://github.com/broxus/ton-labs-abi" }
 ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }
 ton_types = { git = "https://github.com/broxus/ton-labs-types.git" }
 
+borsh = "0.9.3"
+either = "1.6.1"
+
+[dev-dependencies]
+paste = "1.0"
+
 [profile.release]
 opt-level = "s"
 

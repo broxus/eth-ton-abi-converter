@@ -1,6 +1,7 @@
 pub use self::eth_to_ton::*;
 pub use self::ton_to_eth::*;
 
+pub mod borsh;
 mod eth_to_ton;
 mod ton_to_eth;
 
