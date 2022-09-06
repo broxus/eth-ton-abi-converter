@@ -1,14 +1,153 @@
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 
+use anyhow::Result;
 use borsh::{BorshDeserialize, BorshSerialize};
 use either::Either;
 use num_bigint::{BigInt, BigUint, Sign};
-use ton_abi::{ParamType, TokenValue};
+use ton_abi::{Param, ParamType, Token, TokenValue};
 use ton_block::{Deserializable, Grams, MsgAddress};
 use ton_types::Cell;
 
-pub struct TokenWrapper<'a>(&'a TokenValue);
+pub fn serialize(tokens: &[Token]) -> Result<Vec<u8>> {
+    let tokens_wrapped = tokens.iter().map(|item| TokenWrapper(&item.value));
+    let mut result = Vec::with_capacity(128);
+    for token in tokens_wrapped {
+        token.serialize(&mut result)?;
+    }
+    Ok(result)
+}
+
+pub fn serialize_values(tokens: &[TokenValue]) -> Result<Vec<u8>> {
+    let tokens_wrapped = tokens.iter().map(TokenWrapper);
+    let mut result = Vec::with_capacity(128);
+    for token in tokens_wrapped {
+        token.serialize(&mut result)?;
+    }
+    Ok(result)
+}
+
+pub fn deserialize(reader: &mut &[u8], types: &[Param]) -> Result<Vec<Token>> {
+    let mut tokens = Vec::with_capacity(types.len());
+    for ty in types {
+        let value = deserialize_value(reader, &ty.kind)?;
+        tokens.push(Token::new(&ty.name, value));
+    }
+    Ok(tokens)
+}
+
+pub fn deserialize_values(reader: &mut &[u8], types: &[ParamType]) -> Result<Vec<TokenValue>> {
+    let mut tokens = Vec::with_capacity(types.len());
+    for ty in types {
+        let token = deserialize_value(reader, ty)?;
+        tokens.push(token);
+    }
+    Ok(tokens)
+}
+
+pub fn deserialize_value(reader: &mut &[u8], ty: &ParamType) -> Result<TokenValue> {
+    match ty {
+        ParamType::Uint(size) => deserialize_int(reader, *size, false),
+        ParamType::Int(size) => deserialize_int(reader, *size, true),
+        ParamType::VarUint(size) => deserialize_int(reader, *size, false),
+        ParamType::VarInt(size) => deserialize_int(reader, *size, true),
+        ParamType::Bool => {
+            let bool = bool::deserialize(reader)?;
+            Ok(TokenValue::Bool(bool))
+        }
+        ParamType::Tuple(ty) => deserialize(reader, ty).map(TokenValue::Tuple),
+        ParamType::Array(ty) => {
+            let size = u32::deserialize(reader)?;
+            let mut tokens = Vec::with_capacity(size as usize);
+            for _ in 0..size {
+                tokens.push(deserialize_value(reader, ty)?);
+            }
+            Ok(TokenValue::Array(*ty.clone(), tokens))
+        }
+        ParamType::FixedArray(ty, size) => {
+            let mut tokens = Vec::with_capacity(*size);
+            for _ in 0..*size {
+                let value = deserialize_value(reader, ty)?;
+                tokens.push(value);
+            }
+            Ok(TokenValue::FixedArray(*ty.clone(), tokens))
+        }
+        ParamType::Cell => {
+            let bytes = Vec::deserialize(reader)?;
+            let cell = Cell::construct_from_bytes(&bytes)?;
+            Ok(TokenValue::Cell(cell))
+        }
+        ParamType::Map(key_ty, value_ty) => {
+            let size = u32::deserialize(reader)?;
+            let mut tokens = BTreeMap::new();
+            for _ in 0..size {
+                let key = deserialize_value(reader, key_ty)?.to_string();
+                let value = deserialize_value(reader, value_ty)?;
+                tokens.insert(key, value);
+            }
+            Ok(TokenValue::Map(*key_ty.clone(), *value_ty.clone(), tokens))
+        }
+        ParamType::Address => {
+            let ty: u8 = u8::deserialize(reader)?;
+            if ty == 0 {
+                let wc: i8 = i8::deserialize(reader)?;
+                let address = <[u8; 32] as BorshDeserialize>::deserialize(reader)?;
+
+                let address = ton_block::MsgAddrStd::with_address(None, wc, address.into());
+                Ok(TokenValue::Address(MsgAddress::AddrStd(address)))
+            } else {
+                anyhow::bail!("unsupported address type")
+            }
+        }
+        ParamType::Bytes => {
+            let bytes = Vec::deserialize(reader)?;
+            Ok(TokenValue::Bytes(bytes))
+        }
+        ParamType::FixedBytes(size) => {
+            let mut buf = vec![0; *size as usize];
+            reader.read_exact(&mut buf)?;
+            Ok(TokenValue::FixedBytes(buf))
+        }
+        ParamType::String => {
+            let string = String::deserialize(reader)?;
+            Ok(TokenValue::String(string))
+        }
+        ParamType::Token => {
+            let grams = u128::deserialize(reader)?;
+            Ok(TokenValue::Token(Grams(grams)))
+        }
+        ParamType::Time => {
+            let time = u64::deserialize(reader)?;
+            Ok(TokenValue::Time(time))
+        }
+        ParamType::Expire => {
+            let expire = u32::deserialize(reader)?;
+            Ok(TokenValue::Expire(expire))
+        }
+        ParamType::PublicKey => {
+            let bytes: Option<[u8; 32]> = BorshDeserialize::deserialize(reader)?;
+            let pubkey = bytes
+                .map(|x| ed25519_dalek::PublicKey::from_bytes(&x))
+                .transpose()?;
+            Ok(TokenValue::PublicKey(pubkey))
+        }
+        ParamType::Optional(ty) => {
+            let is_set = bool::deserialize(reader)?;
+            if is_set {
+                let value = deserialize_value(reader, ty)?;
+                Ok(TokenValue::Optional(*ty.clone(), Some(Box::new(value))))
+            } else {
+                Ok(TokenValue::Optional(*ty.clone(), None))
+            }
+        }
+        ParamType::Ref(ty) => {
+            let value = deserialize_value(reader, ty)?;
+            Ok(TokenValue::Ref(Box::new(value)))
+        }
+    }
+}
+
+struct TokenWrapper<'a>(&'a TokenValue);
 
 impl<'a> BorshSerialize for TokenWrapper<'a> {
     fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
@@ -141,19 +280,7 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
     }
 }
 
-const MAX_SMALL_INT_SIZE: usize = 128;
-
-fn small_int_size(size: usize) -> usize {
-    match size {
-        0..=8 => 1,
-        9..=16 => 2,
-        17..=32 => 4,
-        33..=64 => 8,
-        _ => 16,
-    }
-}
-
-fn read_any_int(buf: &mut &[u8], size: usize, signed: bool) -> anyhow::Result<TokenValue> {
+fn deserialize_int(buf: &mut &[u8], size: usize, signed: bool) -> Result<TokenValue> {
     let any_int = match size {
         0..=8 => {
             if signed {
@@ -218,149 +345,17 @@ fn read_any_int(buf: &mut &[u8], size: usize, signed: bool) -> anyhow::Result<To
     })
 }
 
-pub struct TokenWrapperOwned(TokenValue);
-
-impl BorshSerialize for TokenWrapperOwned {
-    fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
-        let wrapped = TokenWrapper(&self.0);
-        wrapped.serialize(writer)
+fn small_int_size(size: usize) -> usize {
+    match size {
+        0..=8 => 1,
+        9..=16 => 2,
+        17..=32 => 4,
+        33..=64 => 8,
+        _ => 16,
     }
 }
 
-pub fn serialize_tokens(tokens: &[TokenValue]) -> anyhow::Result<Vec<u8>> {
-    let tokens_wrapped = tokens.iter().map(|t| TokenWrapperOwned(t.clone()));
-    let mut writer = Vec::with_capacity(128);
-    for token in tokens_wrapped {
-        token.serialize(&mut writer)?;
-    }
-
-    Ok(writer)
-}
-
-pub fn deserialize_with_abi(
-    reader: &mut &[u8],
-    types: &[ParamType],
-) -> anyhow::Result<Vec<TokenValue>> {
-    let mut tokens = Vec::with_capacity(types.len());
-
-    for ty in types {
-        let token = deserialize(reader, ty)?;
-        tokens.push(token);
-    }
-
-    Ok(tokens)
-}
-
-pub fn deserialize(reader: &mut &[u8], ty: &ParamType) -> anyhow::Result<TokenValue> {
-    match ty {
-        ParamType::Uint(size) => read_any_int(reader, *size, false),
-        ParamType::Int(size) => read_any_int(reader, *size, true),
-        ParamType::VarUint(size) => read_any_int(reader, *size, false),
-        ParamType::VarInt(size) => read_any_int(reader, *size, true),
-        ParamType::Bool => {
-            let bool = bool::deserialize(reader)?;
-            Ok(TokenValue::Bool(bool))
-        }
-        ParamType::Tuple(a) => {
-            let mut tokens = Vec::with_capacity(a.len());
-            for token in a {
-                let value = deserialize(reader, &token.kind)?;
-                let token = ton_abi::Token::new(&token.name, value);
-                tokens.push(token);
-            }
-            Ok(TokenValue::Tuple(tokens))
-        }
-        ParamType::Array(ty) => {
-            let size: u32 = u32::deserialize(reader)?;
-            let mut tokens = Vec::with_capacity(size as usize);
-            for _ in 0..size {
-                let value = deserialize(reader, ty)?;
-                tokens.push(value);
-            }
-            Ok(TokenValue::Array(*ty.clone(), tokens))
-        }
-        ParamType::FixedArray(ty, size) => {
-            let mut tokens = Vec::with_capacity(*size);
-            for _ in 0..*size {
-                let value = deserialize(reader, ty)?;
-                tokens.push(value);
-            }
-            Ok(TokenValue::FixedArray(*ty.clone(), tokens))
-        }
-        ParamType::Cell => {
-            let bytes = Vec::deserialize(reader)?;
-            let cell = Cell::construct_from_bytes(&bytes)?;
-            Ok(TokenValue::Cell(cell))
-        }
-        ParamType::Map(a, b) => {
-            let size = u32::deserialize(reader)?;
-            let mut tokens = BTreeMap::new();
-            for _ in 0..size {
-                let key = deserialize(reader, a)?.to_string();
-                let value = deserialize(reader, b)?;
-                tokens.insert(key, value);
-            }
-            Ok(TokenValue::Map(*a.clone(), *b.clone(), tokens))
-        }
-        ParamType::Address => {
-            let ty: u8 = u8::deserialize(reader)?;
-            if ty == 0 {
-                let wc: i8 = i8::deserialize(reader)?;
-                let address = <[u8; 32] as BorshDeserialize>::deserialize(reader)?;
-
-                let address = ton_block::MsgAddrStd::with_address(None, wc, address.into());
-                Ok(TokenValue::Address(MsgAddress::AddrStd(address)))
-            } else {
-                anyhow::bail!("unsupported address type")
-            }
-        }
-        ParamType::Bytes => {
-            let bytes = Vec::deserialize(reader)?;
-            Ok(TokenValue::Bytes(bytes))
-        }
-        ParamType::FixedBytes(size) => {
-            let mut buf = vec![0; *size as usize];
-            reader.read_exact(&mut buf)?;
-            Ok(TokenValue::FixedBytes(buf))
-        }
-        ParamType::String => {
-            let string = String::deserialize(reader)?;
-            Ok(TokenValue::String(string))
-        }
-        ParamType::Token => {
-            let amount = u128::deserialize(reader)?;
-            Ok(TokenValue::Token(Grams(amount)))
-        }
-        ParamType::Time => {
-            let time = u64::deserialize(reader)?;
-            Ok(TokenValue::Time(time))
-        }
-        ParamType::Expire => {
-            let expire = u32::deserialize(reader)?;
-            Ok(TokenValue::Expire(expire))
-        }
-        ParamType::PublicKey => {
-            let bytes: Option<[u8; 32]> = BorshDeserialize::deserialize(reader)?;
-            let pubkey = bytes
-                .map(|x| ed25519_dalek::PublicKey::from_bytes(&x))
-                .transpose()?;
-            Ok(TokenValue::PublicKey(pubkey))
-        }
-        ParamType::Optional(ty) => {
-            let is_set = bool::deserialize(reader)?;
-            if is_set {
-                let value = deserialize(reader, ty)?;
-                Ok(TokenValue::Optional(*ty.clone(), Some(Box::new(value))))
-            } else {
-                Ok(TokenValue::Optional(*ty.clone(), None))
-            }
-        }
-        ParamType::Ref(a) => {
-            let value = deserialize(reader, a)?;
-            Ok(TokenValue::Ref(Box::new(value)))
-        }
-    }
-}
+const MAX_SMALL_INT_SIZE: usize = 128;
 
 #[cfg(test)]
 mod test {
@@ -375,27 +370,27 @@ mod test {
             let mut $buf = vec![];
             paste! {
                 generate_test!(@signed i, $size,  [<i $size>]::MAX, $buf, $number);
-                assert_eq!(read_any_int(&mut &$buf[..], $size as usize, true).unwrap(), $number);
+                assert_eq!(deserialize_int(&mut $buf.as_slice(), $size as usize, true).unwrap(), $number);
                 $buf.clear();
 
                 generate_test!(@signed i, $size, [<i $size>]::MIN, $buf, $number);
-                assert_eq!(read_any_int(&mut &$buf[..], $size as usize, true).unwrap(), $number);
+                assert_eq!(deserialize_int(&mut $buf.as_slice(), $size as usize, true).unwrap(), $number);
                 $buf.clear();
 
                 generate_test!(@signed i, $size, 0, $buf, $number);
-                assert_eq!(read_any_int(&mut &$buf[..], $size as usize, true).unwrap(), $number);
+                assert_eq!(deserialize_int(&mut $buf.as_slice(), $size as usize, true).unwrap(), $number);
                 $buf.clear();
 
                 generate_test!(@signed u, $size, [<u $size>]::MAX, $buf, $number);
-                assert_eq!(read_any_int(&mut &$buf[..], $size as usize, false).unwrap(), $number);
+                assert_eq!(deserialize_int(&mut $buf.as_slice(), $size as usize, false).unwrap(), $number);
                 $buf.clear();
 
                 generate_test!(@signed u, $size, [<u $size>]::MIN, $buf, $number);
-                assert_eq!(read_any_int(&mut &$buf[..], $size as usize, false).unwrap(), $number);
+                assert_eq!(deserialize_int(&mut $buf.as_slice(), $size as usize, false).unwrap(), $number);
                 $buf.clear();
 
                 generate_test!(@signed u, $size, 0, $buf, $number);
-                assert_eq!(read_any_int(&mut &$buf[..], $size as usize, false).unwrap(), $number);
+                assert_eq!(deserialize_int(&mut $buf.as_slice(), $size as usize, false).unwrap(), $number);
                 $buf.clear();
             }
         };
@@ -444,10 +439,8 @@ mod test {
         };
         let token = TokenValue::Address(MsgAddress::AddrStd(addr));
         let tokens = vec![token];
-        let packed = super::serialize_tokens(&tokens).unwrap();
-        dbg!(&packed);
-        let unpacked =
-            super::deserialize_with_abi(&mut &packed[..], &[ParamType::Address]).unwrap();
+        let packed = serialize_values(&tokens).unwrap();
+        let unpacked = deserialize_values(&mut packed.as_slice(), &[ParamType::Address]).unwrap();
 
         assert_eq!(unpacked, tokens);
     }
@@ -458,8 +451,8 @@ mod test {
             number: BigUint::from(u128::MAX),
             size: 256,
         };
-        let bytes = serialize_tokens(&[TokenValue::Uint(uint.clone())]).unwrap();
-        let got = deserialize_with_abi(&mut &bytes[..], &[ParamType::Uint(256)])
+        let bytes = serialize_values(&[TokenValue::Uint(uint.clone())]).unwrap();
+        let got = deserialize_values(&mut bytes.as_slice(), &[ParamType::Uint(256)])
             .unwrap()
             .remove(0);
         assert_eq!(got.to_string(), TokenValue::Uint(uint).to_string());
@@ -468,8 +461,8 @@ mod test {
             number: BigUint::from(u128::MIN),
             size: 256,
         };
-        let bytes = serialize_tokens(&[TokenValue::Uint(uint.clone())]).unwrap();
-        let got = deserialize_with_abi(&mut &bytes[..], &[ParamType::Uint(256)])
+        let bytes = serialize_values(&[TokenValue::Uint(uint.clone())]).unwrap();
+        let got = deserialize_values(&mut bytes.as_slice(), &[ParamType::Uint(256)])
             .unwrap()
             .remove(0);
         assert_eq!(got.to_string(), TokenValue::Uint(uint).to_string());
@@ -478,8 +471,8 @@ mod test {
             number: BigUint::from(1u128),
             size: 256,
         };
-        let bytes = serialize_tokens(&[TokenValue::Uint(uint.clone())]).unwrap();
-        let got = deserialize_with_abi(&mut &bytes[..], &[ParamType::Uint(256)])
+        let bytes = serialize_values(&[TokenValue::Uint(uint.clone())]).unwrap();
+        let got = deserialize_values(&mut bytes.as_slice(), &[ParamType::Uint(256)])
             .unwrap()
             .remove(0);
         assert_eq!(got.to_string(), TokenValue::Uint(uint).to_string());
@@ -488,28 +481,28 @@ mod test {
             number: BigUint::from(1u128),
             size: 123,
         };
-        let bytes = serialize_tokens(&[TokenValue::Uint(uint.clone())]).unwrap();
-        let got = deserialize_with_abi(&mut &bytes[..], &[ParamType::Uint(123)])
+        let bytes = serialize_values(&[TokenValue::Uint(uint.clone())]).unwrap();
+        let got = deserialize_values(&mut bytes.as_slice(), &[ParamType::Uint(123)])
             .unwrap()
             .remove(0);
         assert_eq!(got.to_string(), TokenValue::Uint(uint).to_string());
         //ints
         let int = ton_abi::Int {
-            number: BigInt::from(i128::max_value()),
+            number: BigInt::from(i128::MAX),
             size: 256,
         };
-        let bytes = serialize_tokens(&[TokenValue::Int(int.clone())]).unwrap();
-        let got = deserialize_with_abi(&mut &bytes[..], &[ParamType::Int(256)])
+        let bytes = serialize_values(&[TokenValue::Int(int.clone())]).unwrap();
+        let got = deserialize_values(&mut bytes.as_slice(), &[ParamType::Int(256)])
             .unwrap()
             .remove(0);
         assert_eq!(got.to_string(), TokenValue::Int(int).to_string());
 
         let int = ton_abi::Int {
-            number: BigInt::from(i128::min_value() + 1),
+            number: BigInt::from(i128::MIN + 1),
             size: 256,
         };
-        let bytes = serialize_tokens(&[TokenValue::Int(int.clone())]).unwrap();
-        let got = deserialize_with_abi(&mut &bytes[..], &[ParamType::Int(256)])
+        let bytes = serialize_values(&[TokenValue::Int(int.clone())]).unwrap();
+        let got = deserialize_values(&mut bytes.as_slice(), &[ParamType::Int(256)])
             .unwrap()
             .remove(0);
         assert_eq!(got.to_string(), TokenValue::Int(int).to_string());
@@ -518,8 +511,8 @@ mod test {
             number: BigInt::from(1i128),
             size: 256,
         };
-        let bytes = serialize_tokens(&[TokenValue::Int(int.clone())]).unwrap();
-        let got = deserialize_with_abi(&mut &bytes[..], &[ParamType::Int(256)])
+        let bytes = serialize_values(&[TokenValue::Int(int.clone())]).unwrap();
+        let got = deserialize_values(&mut bytes.as_slice(), &[ParamType::Int(256)])
             .unwrap()
             .remove(0);
         assert_eq!(got.to_string(), TokenValue::Int(int).to_string());
@@ -528,8 +521,8 @@ mod test {
             number: BigInt::from(1i128),
             size: 123,
         };
-        let bytes = serialize_tokens(&[TokenValue::Int(int.clone())]).unwrap();
-        let got = deserialize_with_abi(&mut &bytes[..], &[ParamType::Int(123)])
+        let bytes = serialize_values(&[TokenValue::Int(int.clone())]).unwrap();
+        let got = deserialize_values(&mut bytes.as_slice(), &[ParamType::Int(123)])
             .unwrap()
             .remove(0);
         assert_eq!(got.to_string(), TokenValue::Int(int).to_string());
@@ -543,8 +536,8 @@ mod test {
                 number: BigUint::from_bytes_le(&bytes),
                 size: 256,
             };
-            let bytes = serialize_tokens(&[TokenValue::Uint(uint.clone())]).unwrap();
-            let got = deserialize_with_abi(&mut &bytes[..], &[ParamType::Uint(256)])
+            let bytes = serialize_values(&[TokenValue::Uint(uint.clone())]).unwrap();
+            let got = deserialize_values(&mut bytes.as_slice(), &[ParamType::Uint(256)])
                 .unwrap()
                 .remove(0);
             assert_eq!(got.to_string(), TokenValue::Uint(uint).to_string());
