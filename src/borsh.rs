@@ -81,7 +81,7 @@ pub fn deserialize_value(reader: &mut &[u8], ty: &ParamType) -> Result<TokenValu
             let size = u32::deserialize(reader)?;
             let mut tokens = BTreeMap::new();
             for _ in 0..size {
-                let key = deserialize_value(reader, key_ty)?.to_string();
+                let key = deserialize_value(reader, key_ty)?.try_into()?;
                 let value = deserialize_value(reader, value_ty)?;
                 tokens.insert(key, value);
             }
@@ -164,7 +164,7 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
                     }
                     buffer
                 };
-                writer.write(&number)?;
+                writer.write_all(&number)?;
                 Ok(())
             }
             TokenValue::Int(int) => {
@@ -185,7 +185,7 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
                     }
                     buffer
                 };
-                writer.write(&number)?;
+                writer.write_all(&number)?;
                 Ok(())
             }
             TokenValue::VarInt(_, int) => {
@@ -193,7 +193,7 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
                 let mut number = Vec::with_capacity(1 + bytes.len());
                 number.push(bytes.len() as u8);
                 number.extend_from_slice(&bytes);
-                writer.write(&number)?;
+                writer.write_all(&number)?;
                 Ok(())
             }
             TokenValue::VarUint(_, uint) => {
@@ -201,7 +201,7 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
                 let mut number = Vec::with_capacity(1 + bytes.len());
                 number.push(bytes.len() as u8);
                 number.extend_from_slice(&bytes);
-                writer.write(&number)?;
+                writer.write_all(&number)?;
                 Ok(())
             }
             TokenValue::Bool(bool) => bool.serialize(writer),
@@ -230,15 +230,11 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
                 cell_bytes.serialize(writer)
             }
-            TokenValue::Map(key_type, _, map) => {
+            TokenValue::Map(_, _, map) => {
                 let size = map.len() as u32;
                 size.serialize(writer)?;
-                for (item, value) in map {
-                    let key = ton_abi::token::Tokenizer::tokenize_parameter(
-                        key_type,
-                        &item.clone().into(),
-                    )
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                for (key, value) in map {
+                    let key = key.clone().into();
                     TokenWrapper(&key).serialize(writer)?;
                     TokenWrapper(value).serialize(writer)?;
                 }
@@ -326,9 +322,9 @@ fn deserialize_int(buf: &mut &[u8], size: usize, signed: bool) -> Result<TokenVa
             buf.read_exact(bytes)?;
 
             if signed {
-                Either::Left(BigInt::from_signed_bytes_be(&bytes))
+                Either::Left(BigInt::from_signed_bytes_be(bytes))
             } else {
-                Either::Right(BigUint::from_bytes_be(&bytes))
+                Either::Right(BigUint::from_bytes_be(bytes))
             }
         }
     };

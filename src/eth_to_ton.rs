@@ -157,7 +157,7 @@ pub fn map_eth_token_to_ton(
 ) -> Result<Option<ton_abi::TokenValue>> {
     Ok(Some(match (token, param) {
         (ethabi::Token::FixedBytes(x), ethabi::ParamType::FixedBytes(1)) if can_update_ctx => {
-            let flags = *x.get(0).ok_or(AbiMappingError::InvalidMappingFlags)?;
+            let flags = *x.first().ok_or(AbiMappingError::InvalidMappingFlags)?;
             ctx.update(flags);
             return Ok(None);
         }
