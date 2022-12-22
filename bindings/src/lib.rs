@@ -50,7 +50,16 @@ pub fn map_sol_bytes_into_ton_cell(abi: &str, data: &str) -> Result<String, JsVa
 }
 
 #[wasm_bindgen(js_name = "mapTonCellIntoEthBytes")]
-pub fn map_ton_cell_into_eth_bytes(abi: &str, boc: &str) -> Result<String, JsValue> {
+pub fn map_ton_cell_into_eth_bytes(abi: &str, boc: &str, flags: &str) -> Result<String, JsValue> {
+    let flags = flags.trim();
+
+    // Unused by now, reserved
+    let _flags = match flags.strip_prefix("0x") {
+        Some(flags) => u64::from_str_radix(flags, 16),
+        None => u64::from_str(flags),
+    }
+    .handle_error()?;
+
     // Parse ABI
     let params = decode_ton_event_abi(abi).handle_error()?;
 
