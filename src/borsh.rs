@@ -104,7 +104,7 @@ pub fn deserialize_value(reader: &mut &[u8], ty: &ParamType) -> Result<TokenValu
             Ok(TokenValue::Bytes(bytes))
         }
         ParamType::FixedBytes(size) => {
-            let mut buf = vec![0; *size as usize];
+            let mut buf = vec![0; *size];
             reader.read_exact(&mut buf)?;
             Ok(TokenValue::FixedBytes(buf))
         }
@@ -330,14 +330,8 @@ fn deserialize_int(buf: &mut &[u8], size: usize, signed: bool) -> Result<TokenVa
     };
 
     Ok(match any_int {
-        Either::Left(a) => TokenValue::Int(ton_abi::Int {
-            number: a,
-            size: size as usize,
-        }),
-        Either::Right(b) => TokenValue::Uint(ton_abi::Uint {
-            number: b,
-            size: size as usize,
-        }),
+        Either::Left(a) => TokenValue::Int(ton_abi::Int { number: a, size }),
+        Either::Right(b) => TokenValue::Uint(ton_abi::Uint { number: b, size }),
     })
 }
 

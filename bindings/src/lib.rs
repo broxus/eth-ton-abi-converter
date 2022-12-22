@@ -1,5 +1,7 @@
 #![allow(clippy::unused_unit)]
 
+use std::str::FromStr;
+
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -67,7 +69,15 @@ pub fn map_ton_cell_into_eth_bytes(abi: &str, boc: &str) -> Result<String, JsVal
 }
 
 #[wasm_bindgen(js_name = "mapEthBytesIntoTonCell")]
-pub fn map_eth_bytes_into_ton_cell(abi: &str, data: &str) -> Result<String, JsValue> {
+pub fn map_eth_bytes_into_ton_cell(abi: &str, data: &str, flags: &str) -> Result<String, JsValue> {
+    let flags = flags.trim();
+    let flags = match flags.strip_prefix("0x") {
+        Some(flags) => u64::from_str_radix(flags, 16),
+        None => u64::from_str(flags),
+    }
+    .handle_error()?;
+    let ctx = EthToTonMappingContext::from(flags as u8);
+
     // Parse ABI
     let event = decode_eth_event_abi(abi).handle_error()?;
     let params = event
@@ -81,7 +91,7 @@ pub fn map_eth_bytes_into_ton_cell(abi: &str, data: &str) -> Result<String, JsVa
     let tokens = ethabi::decode(&params, &data).handle_error()?;
 
     // Map tokens
-    let cell = map_eth_tokens_to_ton_cell(tokens, &params).handle_error()?;
+    let cell = map_eth_tokens_to_ton_cell(tokens, &params, ctx).handle_error()?;
     ton_types::serialize_toc(&cell)
         .handle_error()
         .map(base64::encode)

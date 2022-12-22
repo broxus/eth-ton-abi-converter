@@ -21,9 +21,13 @@ impl EthEventAbi {
         &self.topic_hash
     }
 
-    pub fn decode_and_map(&self, data: &[u8]) -> Result<ton_types::Cell> {
+    pub fn decode_and_map(
+        &self,
+        data: &[u8],
+        ctx: EthToTonMappingContext,
+    ) -> Result<ton_types::Cell> {
         let tokens = ethabi::decode(&self.params, data)?;
-        map_eth_tokens_to_ton_cell(tokens, &self.params)
+        map_eth_tokens_to_ton_cell(tokens, &self.params, ctx)
     }
 }
 
@@ -93,9 +97,8 @@ fn map_eth_abi_param_to_ton(
 pub fn map_eth_tokens_to_ton_cell(
     tokens: Vec<ethabi::Token>,
     abi: &[ethabi::ParamType],
+    mut ctx: EthToTonMappingContext,
 ) -> Result<ton_types::Cell> {
-    let mut ctx = EthToTonMappingContext::default();
-
     let tokens = tokens
         .into_iter()
         .zip(abi.iter())
