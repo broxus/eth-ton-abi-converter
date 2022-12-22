@@ -7,27 +7,28 @@ use crate::AbiMappingError;
 pub struct EthEventAbi {
     topic_hash: ethabi::Hash,
     params: Vec<ethabi::ParamType>,
+    ctx: EthToTonMappingContext,
 }
 
 impl EthEventAbi {
-    pub fn new(abi: &str) -> Result<Self> {
+    pub fn new(abi: &str, ctx: EthToTonMappingContext) -> Result<Self> {
         let event = decode_eth_event_abi(abi)?;
         let params = event.inputs.iter().map(|item| item.kind.clone()).collect();
         let topic_hash = event.signature();
-        Ok(Self { topic_hash, params })
+        Ok(Self {
+            topic_hash,
+            params,
+            ctx,
+        })
     }
 
     pub fn get_eth_topic_hash(&self) -> &ethabi::Hash {
         &self.topic_hash
     }
 
-    pub fn decode_and_map(
-        &self,
-        data: &[u8],
-        ctx: EthToTonMappingContext,
-    ) -> Result<ton_types::Cell> {
+    pub fn decode_and_map(&self, data: &[u8]) -> Result<ton_types::Cell> {
         let tokens = ethabi::decode(&self.params, data)?;
-        map_eth_tokens_to_ton_cell(tokens, &self.params, ctx)
+        map_eth_tokens_to_ton_cell(tokens, &self.params, self.ctx)
     }
 }
 
