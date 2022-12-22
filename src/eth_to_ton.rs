@@ -168,12 +168,16 @@ pub fn map_eth_token_to_ton(
         (ethabi::Token::FixedBytes(x), _) => ton_abi::TokenValue::FixedBytes(x.to_vec()),
         (ethabi::Token::Bytes(x), _) => {
             if ctx.bytes_as_cell {
-                match ton_types::deserialize_tree_of_cells(&mut x.as_slice()) {
-                    Ok(cell) => ton_abi::TokenValue::Cell(cell),
-                    Err(_) if ctx.ignore_invalid_cell => {
-                        ton_abi::TokenValue::Cell(Default::default())
+                if x.is_empty() {
+                    ton_abi::TokenValue::Cell(Default::default())
+                } else {
+                    match ton_types::deserialize_tree_of_cells(&mut x.as_slice()) {
+                        Ok(cell) => ton_abi::TokenValue::Cell(cell),
+                        Err(_) if ctx.ignore_invalid_cell => {
+                            ton_abi::TokenValue::Cell(Default::default())
+                        }
+                        Err(e) => return Err(e),
                     }
-                    Err(e) => return Err(e),
                 }
             } else {
                 ton_abi::TokenValue::Bytes(x)
