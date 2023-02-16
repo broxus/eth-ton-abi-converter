@@ -6,8 +6,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use either::Either;
 use num_bigint::{BigInt, BigUint, Sign};
 use ton_abi::{Param, ParamType, Token, TokenValue};
-use ton_block::{Deserializable, Grams, MsgAddress};
-use ton_types::Cell;
+use ton_block::{Grams, MsgAddress};
 
 pub fn serialize(tokens: &[Token]) -> Result<Vec<u8>> {
     let tokens_wrapped = tokens.iter().map(|item| TokenWrapper(&item.value));
@@ -74,7 +73,8 @@ pub fn deserialize_value(reader: &mut &[u8], ty: &ParamType) -> Result<TokenValu
         }
         ParamType::Cell => {
             let bytes = Vec::deserialize(reader)?;
-            let cell = Cell::construct_from_bytes(&bytes)?;
+            let cell = ton_types::deserialize_tree_of_cells(&mut &bytes[..])
+                .map_err(|e| anyhow::anyhow!("failed to deserialize cell: {}", e))?;
             Ok(TokenValue::Cell(cell))
         }
         ParamType::Map(key_ty, value_ty) => {
@@ -226,7 +226,7 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
                 Ok(())
             }
             TokenValue::Cell(cell) => {
-                let cell_bytes = ton_block::Serializable::write_to_bytes(cell)
+                let cell_bytes = ton_types::serialize_toc(cell)
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
                 cell_bytes.serialize(writer)
             }
