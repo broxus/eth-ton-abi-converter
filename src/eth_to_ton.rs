@@ -248,8 +248,7 @@ pub fn map_eth_token_to_ton(
                         &tokens,
                         Default::default(),
                         ton_abi::contract::ABI_VERSION_2_2,
-                    )?
-                    .into(),
+                    )?.into_cell()?,
                 )
             } else {
                 ton_abi::TokenValue::Tuple(

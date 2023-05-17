@@ -114,7 +114,7 @@ pub fn deserialize_value(reader: &mut &[u8], ty: &ParamType) -> Result<TokenValu
         }
         ParamType::Token => {
             let grams = u128::deserialize(reader)?;
-            Ok(TokenValue::Token(Grams(grams)))
+            Ok(TokenValue::Token(Grams::new(grams)?))
         }
         ParamType::Time => {
             let time = u64::deserialize(reader)?;
@@ -258,7 +258,7 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
             TokenValue::FixedBytes(bytes) => writer.write_all(bytes),
             TokenValue::String(str) => str.serialize(writer),
             TokenValue::Token(token) => {
-                let value = token.0;
+                let value = token.as_u128();
                 value.serialize(writer)
             }
             TokenValue::Time(time) => time.serialize(writer),
