@@ -131,6 +131,11 @@ pub struct EthToTonMappingContext {
     ///
     /// See `MAPPING_FLAG_IGNORE_INVALID_CELL`
     pub ignore_invalid_cell: bool,
+
+    /// Check token root for token wallet
+    ///
+    /// see `MAPPING_FLAG_CHECK_TOKEN_ROOT`
+    pub check_token_root: bool,
 }
 
 impl EthToTonMappingContext {
@@ -138,12 +143,14 @@ impl EthToTonMappingContext {
         self.tuples_to_new_cell = flags & MAPPING_FLAG_TUPLES_TO_NEW_CELL != 0;
         self.bytes_as_cell = flags & MAPPING_FLAG_BYTES_AS_CELL != 0;
         self.ignore_invalid_cell = flags & MAPPING_FLAG_IGNORE_INVALID_CELL != 0;
+        self.check_token_root = flags & MAPPING_FLAG_CHECK_TOKEN_ROOT != 0;
     }
 }
 
 pub const MAPPING_FLAG_TUPLES_TO_NEW_CELL: u8 = 0b00000001;
 pub const MAPPING_FLAG_BYTES_AS_CELL: u8 = 0b00000010;
 pub const MAPPING_FLAG_IGNORE_INVALID_CELL: u8 = 0b00000100;
+pub const MAPPING_FLAG_CHECK_TOKEN_ROOT: u8 = 0b00001000;
 
 impl From<u8> for EthToTonMappingContext {
     fn from(flags: u8) -> Self {
@@ -248,7 +255,8 @@ pub fn map_eth_token_to_ton(
                         &tokens,
                         Default::default(),
                         ton_abi::contract::ABI_VERSION_2_2,
-                    )?.into_cell()?,
+                    )?
+                    .into_cell()?,
                 )
             } else {
                 ton_abi::TokenValue::Tuple(
