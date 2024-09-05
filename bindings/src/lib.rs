@@ -1,7 +1,7 @@
 #![allow(clippy::unused_unit)]
 
 use std::str::FromStr;
-
+use ton_types::SliceData;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -20,7 +20,7 @@ pub fn map_ton_cell_into_sol_bytes(abi: &str, boc: &str) -> Result<String, JsVal
     let cell = ton_types::deserialize_tree_of_cells(&mut boc.as_slice()).handle_error()?;
 
     // Unpack tokens
-    let tokens = unpack_from_cell(&params, cell.into()).handle_error()?;
+    let tokens = unpack_from_cell(&params, SliceData::load_cell(cell).handle_error()?).handle_error()?;
 
     // Serialize tokens
     borsh::serialize(&tokens).map(base64::encode).handle_error()
@@ -68,7 +68,7 @@ pub fn map_ton_cell_into_eth_bytes(abi: &str, boc: &str, flags: &str) -> Result<
     let cell = ton_types::deserialize_tree_of_cells(&mut boc.as_slice()).handle_error()?;
 
     // Unpack tokens
-    let tokens = unpack_from_cell(&params, cell.into()).handle_error()?;
+    let tokens = unpack_from_cell(&params, SliceData::load_cell(cell).handle_error()?).handle_error()?;
 
     // Map tokens
     map_ton_tokens_to_eth_bytes(tokens)
