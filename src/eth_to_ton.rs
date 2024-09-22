@@ -134,7 +134,7 @@ pub struct EthToTonMappingContext {
 
     /// Check token root for token wallet
     ///
-    /// see `MAPPING_FLAG_CHECK_TOKEN_ROOT`
+    /// See `MAPPING_FLAG_CHECK_TOKEN_ROOT`
     pub check_token_root: bool,
 }
 

@@ -1,6 +1,31 @@
 use anyhow::Result;
+use serde::Deserialize;
 
 use crate::AbiMappingError;
+
+#[derive(Default, Copy, Clone, Deserialize)]
+pub struct TonToEthContext {
+    /// Verify the token metadata (name, symbol, decimal) against the source of truth
+    ///
+    /// See `MAPPING_FLAG_VERIFY_TOKEN_META`
+    pub verify_token_meta: bool,
+}
+
+impl TonToEthContext {
+    pub fn update(&mut self, flags: u8) {
+        self.verify_token_meta = flags & MAPPING_FLAG_VERIFY_TOKEN_META != 0;
+    }
+}
+
+pub const MAPPING_FLAG_VERIFY_TOKEN_META: u8 = 0b00000001;
+
+impl From<u8> for TonToEthContext {
+    fn from(flags: u8) -> Self {
+        let mut ctx = Self::default();
+        ctx.update(flags);
+        ctx
+    }
+}
 
 /// struct TONEvent {
 ///     uint64 eventTransactionLt;
