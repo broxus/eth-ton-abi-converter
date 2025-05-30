@@ -144,8 +144,17 @@ pub fn deserialize_value(reader: &mut &[u8], ty: &ParamType) -> Result<TokenValu
             let value = deserialize_value(reader, ty)?;
             Ok(TokenValue::Ref(Box::new(value)))
         }
-        ParamType::AddressStd => {
-            todo!()
+        ParamType::AddressStd  => {
+            let ty: u8 = u8::deserialize(reader)?;
+            if ty == 0 {
+                let wc: i8 = i8::deserialize(reader)?;
+                let address = <[u8; 32] as BorshDeserialize>::deserialize(reader)?;
+
+                let address = ton_block::MsgAddrStd::with_address(None, wc, address.into());
+                Ok(TokenValue::AddressStd(MsgAddress::AddrStd(address)))
+            } else {
+                anyhow::bail!("unsupported address type")
+            }
         }
     }
 }
@@ -243,7 +252,7 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
                 }
                 Ok(())
             }
-            TokenValue::Address(add) => {
+            TokenValue::Address(add) | TokenValue::AddressStd(add)=> {
                 match add {
                     MsgAddress::AddrStd(ad) => {
                         0u8.serialize(writer)?; //discriminant
@@ -274,9 +283,6 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
                 }
             },
             TokenValue::Ref(val) => TokenWrapper(val).serialize(writer),
-            TokenValue::AddressStd(_) => {
-                todo!()
-            }
         }
     }
 }
