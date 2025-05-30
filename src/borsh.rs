@@ -87,7 +87,7 @@ pub fn deserialize_value(reader: &mut &[u8], ty: &ParamType) -> Result<TokenValu
             }
             Ok(TokenValue::Map(*key_ty.clone(), *value_ty.clone(), tokens))
         }
-        ParamType::Address => {
+        ParamType::Address  => {
             let ty: u8 = u8::deserialize(reader)?;
             if ty == 0 {
                 let wc: i8 = i8::deserialize(reader)?;
@@ -143,6 +143,9 @@ pub fn deserialize_value(reader: &mut &[u8], ty: &ParamType) -> Result<TokenValu
         ParamType::Ref(ty) => {
             let value = deserialize_value(reader, ty)?;
             Ok(TokenValue::Ref(Box::new(value)))
+        }
+        ParamType::AddressStd => {
+            todo!()
         }
     }
 }
@@ -227,7 +230,7 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
             }
             TokenValue::Cell(cell) => {
                 let cell_bytes = ton_types::serialize_toc(cell)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                    .map_err(|e| std::io::Error::other(e))?;
                 cell_bytes.serialize(writer)
             }
             TokenValue::Map(_, _, map) => {
@@ -248,8 +251,7 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
                         let address: Vec<u8> = ad.address.get_bytestring(0);
                         writer.write_all(&address)
                     }
-                    _ => Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    _ => Err(std::io::Error::other(
                         "Invalid address",
                     )),
                 }
@@ -272,6 +274,9 @@ impl<'a> BorshSerialize for TokenWrapper<'a> {
                 }
             },
             TokenValue::Ref(val) => TokenWrapper(val).serialize(writer),
+            TokenValue::AddressStd(_) => {
+                todo!()
+            }
         }
     }
 }
